@@ -47,8 +47,41 @@
                     <div id="uploadStatus" class="hidden">
                         <div class="bg-green-50 p-4 rounded-lg">
                             <p class="text-sm text-green-700">
-                                Upload successful! File processed with <span id="rowCount" class="font-medium"></span> rows.
+                                Upload successful! <span id="statusMessage"></span>
                             </p>
+                            <div id="analysisLink" class="mt-2 hidden">
+                                <a href="#" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                    View Analysis Results →
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="analysisResults" class="hidden mt-6 space-y-6">
+                        <h2 class="text-xl font-semibold text-gray-800">Analysis Results</h2>
+                        
+                        <!-- Basic Stats -->
+                        <div class="bg-white rounded-lg shadow p-4">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">Basic Statistics</h3>
+                            <div id="basicStats" class="space-y-2"></div>
+                        </div>
+
+                        <!-- Missing Values -->
+                        <div class="bg-white rounded-lg shadow p-4">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">Missing Values Analysis</h3>
+                            <div id="missingValues" class="space-y-2"></div>
+                        </div>
+
+                        <!-- Correlations -->
+                        <div class="bg-white rounded-lg shadow p-4">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">Correlation Analysis</h3>
+                            <div id="correlations" class="space-y-2"></div>
+                        </div>
+
+                        <!-- Anomalies -->
+                        <div class="bg-white rounded-lg shadow p-4">
+                            <h3 class="text-lg font-medium text-gray-700 mb-3">Anomaly Detection</h3>
+                            <div id="anomalies" class="space-y-2"></div>
                         </div>
                     </div>
 
@@ -67,7 +100,6 @@
         const fileInfo = document.getElementById('fileInfo');
         const fileName = document.getElementById('fileName');
         const uploadStatus = document.getElementById('uploadStatus');
-        const rowCount = document.getElementById('rowCount');
         const submitButton = uploadForm.querySelector('button[type="submit"]');
 
         // Drag and drop handlers
@@ -124,6 +156,100 @@
             }
         }
 
+        let pollInterval = null;
+
+        function startPolling(filename) {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+            
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/analysis/${filename}`);
+                    if (response.ok) {
+                        const results = await response.json();
+                        displayResults(results);
+                        clearInterval(pollInterval);
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        function displayResults(results) {
+            const analysisResults = document.getElementById('analysisResults');
+            const basicStats = document.getElementById('basicStats');
+            const missingValues = document.getElementById('missingValues');
+            const correlations = document.getElementById('correlations');
+            const anomalies = document.getElementById('anomalies');
+
+            // Display basic stats
+            basicStats.innerHTML = Object.entries(results.basic_stats)
+                .map(([col, stats]) => `
+                    <div class="border-b pb-2">
+                        <h4 class="font-medium text-gray-700">${col}</h4>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div>Mean: ${stats.mean.toFixed(2)}</div>
+                            <div>Std: ${stats.std.toFixed(2)}</div>
+                            <div>Min: ${stats.min.toFixed(2)}</div>
+                            <div>Max: ${stats.max.toFixed(2)}</div>
+                            <div>Median: ${stats.median.toFixed(2)}</div>
+                            <div>Skew: ${stats.skew.toFixed(2)}</div>
+                        </div>
+                    </div>
+                `).join('');
+
+            // Display missing values
+            missingValues.innerHTML = `
+                <div class="text-sm">
+                    <div>Total missing values: ${results.missing_values.total_missing}</div>
+                    <div class="mt-2">
+                        <h4 class="font-medium">Missing by column:</h4>
+                        ${Object.entries(results.missing_values.missing_percentage)
+                            .map(([col, pct]) => `
+                                <div class="grid grid-cols-2 gap-2">
+                                    <span>${col}:</span>
+                                    <span>${pct}% (${results.missing_values.missing_per_column[col]})</span>
+                                </div>
+                            `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Display correlations
+            if (results.correlations.strong_correlations) {
+                correlations.innerHTML = `
+                    <div class="text-sm">
+                        <h4 class="font-medium mb-2">Strong Correlations (|r| > 0.5):</h4>
+                        ${results.correlations.strong_correlations
+                            .map(corr => `
+                                <div class="grid grid-cols-2 gap-2">
+                                    <span>${corr.column1} ↔ ${corr.column2}:</span>
+                                    <span>${corr.correlation.toFixed(3)}</span>
+                                </div>
+                            `).join('')}
+                    </div>
+                `;
+            } else {
+                correlations.innerHTML = '<div class="text-sm text-gray-500">No strong correlations found</div>';
+            }
+
+            // Display anomalies
+            anomalies.innerHTML = Object.entries(results.anomalies)
+                .map(([col, data]) => `
+                    <div class="border-b pb-2">
+                        <h4 class="font-medium text-gray-700">${col}</h4>
+                        <div class="text-sm space-y-1">
+                            <div>Z-score anomalies: ${data.z_score_anomalies.count} points</div>
+                            <div>IQR anomalies: ${data.iqr_anomalies.count} points</div>
+                        </div>
+                    </div>
+                `).join('');
+
+            analysisResults.classList.remove('hidden');
+        }
+
         uploadForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const file = fileInput.files[0];
@@ -134,6 +260,9 @@
 
             submitButton.disabled = true;
             submitButton.textContent = 'Uploading...';
+            document.getElementById('uploadStatus').classList.add('hidden');
+            document.getElementById('analysisResults').classList.add('hidden');
+            document.getElementById('analysisLink').classList.add('hidden');
 
             try {
                 const response = await fetch('/upload', {
@@ -146,9 +275,24 @@
                 }
 
                 const result = await response.json();
-                rowCount.textContent = result.rows;
-                uploadStatus.classList.remove('hidden');
-                fileInfo.classList.add('hidden');
+                const statusMessage = document.getElementById('statusMessage');
+                const analysisLink = document.getElementById('analysisLink');
+                const analysisLinkAnchor = analysisLink.querySelector('a');
+                
+                if (result.status === 'processing') {
+                    statusMessage.textContent = 'Analysis in progress...';
+                    document.getElementById('uploadStatus').classList.remove('hidden');
+                    analysisLinkAnchor.href = result.analysis_url;
+                    analysisLink.classList.remove('hidden');
+                    startPolling(result.filename);
+                } else if (result.status === 'completed') {
+                    statusMessage.textContent = 'Analysis completed!';
+                    document.getElementById('uploadStatus').classList.remove('hidden');
+                    analysisLinkAnchor.href = result.analysis_url;
+                    analysisLink.classList.remove('hidden');
+                    displayResults(result.analysis);
+                }
+
                 fileInput.value = '';
                 submitButton.textContent = 'Upload';
             } catch (error) {

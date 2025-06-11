@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Results - DataProfiler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- Navigation -->
+        <nav class="bg-white shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex">
+                        <div class="flex-shrink-0 flex items-center">
+                            <a href="/" class="text-xl font-bold text-blue-600">DataProfiler</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <!-- Header -->
+            <div class="px-4 py-6 sm:px-0">
+                <div class="flex justify-between items-center">
+                    <h1 class="text-2xl font-semibold text-gray-900">Analysis Results</h1>
+                    <a href="/" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                        Upload New File
+                    </a>
+                </div>
+                <p class="mt-1 text-sm text-gray-500" id="filename"></p>
+            </div>
+
+            <!-- Status Message -->
+            <div id="statusMessage" class="hidden px-4 py-3 mb-4 rounded-md">
+                <p class="text-sm"></p>
+            </div>
+
+            <!-- Analysis Results -->
+            <div id="analysisResults" class="hidden space-y-6">
+                <!-- Basic Stats -->
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-lg font-medium text-gray-900 mb-4">Basic Statistics</h2>
+                    <div id="basicStats" class="space-y-4"></div>
+                </div>
+
+                <!-- Missing Values -->
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-lg font-medium text-gray-900 mb-4">Missing Values Analysis</h2>
+                    <div id="missingValues" class="space-y-4"></div>
+                </div>
+
+                <!-- Correlations -->
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-lg font-medium text-gray-900 mb-4">Correlation Analysis</h2>
+                    <div id="correlations" class="space-y-4"></div>
+                </div>
+
+                <!-- Anomalies -->
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-lg font-medium text-gray-900 mb-4">Anomaly Detection</h2>
+                    <div id="anomalies" class="space-y-4"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Get filename from URL
+        const filename = window.location.pathname.split('/').pop();
+        document.getElementById('filename').textContent = `File: ${filename}`;
+
+        let pollInterval = null;
+
+        function startPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+            
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/analysis/${filename}`);
+                    if (response.ok) {
+                        const results = await response.json();
+                        
+                        if (results.status === 'processing') {
+                            showStatus('processing', 'Analysis in progress...');
+                            return;
+                        }
+                        
+                        if (results.status === 'failed') {
+                            showStatus('error', 'Analysis failed: ' + results.detail);
+                            clearInterval(pollInterval);
+                            return;
+                        }
+                        
+                        displayResults(results);
+                        clearInterval(pollInterval);
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    showStatus('error', 'Error fetching results: ' + error.message);
+                    clearInterval(pollInterval);
+                }
+            }, 2000);
+        }
+
+        function showStatus(type, message) {
+            const statusDiv = document.getElementById('statusMessage');
+            const statusText = statusDiv.querySelector('p');
+            
+            statusDiv.className = 'px-4 py-3 mb-4 rounded-md';
+            if (type === 'processing') {
+                statusDiv.classList.add('bg-blue-50', 'text-blue-700');
+            } else if (type === 'error') {
+                statusDiv.classList.add('bg-red-50', 'text-red-700');
+            } else {
+                statusDiv.classList.add('bg-green-50', 'text-green-700');
+            }
+            
+            statusText.textContent = message;
+            statusDiv.classList.remove('hidden');
+        }
+
+        function displayResults(results) {
+            const analysisResults = document.getElementById('analysisResults');
+            const basicStats = document.getElementById('basicStats');
+            const missingValues = document.getElementById('missingValues');
+            const correlations = document.getElementById('correlations');
+            const anomalies = document.getElementById('anomalies');
+
+            // Display basic stats
+            basicStats.innerHTML = Object.entries(results.basic_stats)
+                .map(([col, stats]) => `
+                    <div class="border-b pb-4 last:border-b-0">
+                        <h3 class="font-medium text-gray-700 mb-2">${col}</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div class="bg-gray-50 p-2 rounded">
+                                <span class="text-gray-500">Mean:</span>
+                                <span class="font-medium">${stats.mean.toFixed(2)}</span>
+                            </div>
+                            <div class="bg-gray-50 p-2 rounded">
+                                <span class="text-gray-500">Std:</span>
+                                <span class="font-medium">${stats.std.toFixed(2)}</span>
+                            </div>
+                            <div class="bg-gray-50 p-2 rounded">
+                                <span class="text-gray-500">Min:</span>
+                                <span class="font-medium">${stats.min.toFixed(2)}</span>
+                            </div>
+                            <div class="bg-gray-50 p-2 rounded">
+                                <span class="text-gray-500">Max:</span>
+                                <span class="font-medium">${stats.max.toFixed(2)}</span>
+                            </div>
+                            <div class="bg-gray-50 p-2 rounded">
+                                <span class="text-gray-500">Median:</span>
+                                <span class="font-medium">${stats.median.toFixed(2)}</span>
+                            </div>
+                            <div class="bg-gray-50 p-2 rounded">
+                                <span class="text-gray-500">Skew:</span>
+                                <span class="font-medium">${stats.skew.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+            // Display missing values
+            missingValues.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <span class="text-gray-500">Total missing values:</span>
+                        <span class="font-medium">${results.missing_values.total_missing}</span>
+                    </div>
+                    <div>
+                        <h3 class="font-medium text-gray-700 mb-2">Missing by column:</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            ${Object.entries(results.missing_values.missing_percentage)
+                                .map(([col, pct]) => `
+                                    <div class="bg-gray-50 p-3 rounded-lg">
+                                        <div class="font-medium text-gray-700">${col}</div>
+                                        <div class="text-sm text-gray-500">
+                                            ${pct}% (${results.missing_values.missing_per_column[col]} values)
+                                        </div>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Display correlations
+            if (results.correlations.strong_correlations && results.correlations.strong_correlations.length > 0) {
+                correlations.innerHTML = `
+                    <div class="space-y-4">
+                        <h3 class="font-medium text-gray-700">Strong Correlations (|r| > 0.5):</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            ${results.correlations.strong_correlations
+                                .map(corr => `
+                                    <div class="bg-gray-50 p-3 rounded-lg">
+                                        <div class="font-medium text-gray-700">
+                                            ${corr.column1} ↔ ${corr.column2}
+                                        </div>
+                                        <div class="text-sm text-gray-500">
+                                            Correlation: ${corr.correlation.toFixed(3)}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+                `;
+            } else {
+                correlations.innerHTML = `
+                    <div class="text-gray-500 italic">
+                        No strong correlations found
+                    </div>
+                `;
+            }
+
+            // Display anomalies
+            anomalies.innerHTML = Object.entries(results.anomalies)
+                .map(([col, data]) => `
+                    <div class="border-b pb-4 last:border-b-0">
+                        <h3 class="font-medium text-gray-700 mb-2">${col}</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-gray-50 p-3 rounded-lg">
+                                <div class="font-medium text-gray-700">Z-score Anomalies</div>
+                                <div class="text-sm text-gray-500">
+                                    ${data.z_score_anomalies.count} points detected
+                                </div>
+                            </div>
+                            <div class="bg-gray-50 p-3 rounded-lg">
+                                <div class="font-medium text-gray-700">IQR Anomalies</div>
+                                <div class="text-sm text-gray-500">
+                                    ${data.iqr_anomalies.count} points detected
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+            analysisResults.classList.remove('hidden');
+            showStatus('success', 'Analysis completed successfully!');
+        }
+
+        // Start polling for results
+        startPolling();
+    </script>
+</body>
+</html> 
