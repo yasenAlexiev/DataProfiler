@@ -8,7 +8,7 @@ from pathlib import Path
 from .tasks import analyze_file_background
 from sqlalchemy.orm import Session
 from .database import get_db
-from .models import UploadedFile, ReportEntry, CorrelationEntry, AnomalyEntry
+from .models import UploadedFile, ReportEntry, CorrelationEntry, AnomalyEntry, VisualizationEntry
 from sqlalchemy import desc
 
 app = FastAPI(title="CSV Uploader")
@@ -110,6 +110,11 @@ async def get_analysis(filename: str, db: Session = Depends(get_db)):
             .filter(AnomalyEntry.file_id == file_entry.id)\
             .all()
         
+        # Get visualizations
+        visualizations = db.query(VisualizationEntry)\
+            .filter(VisualizationEntry.file_id == file_entry.id)\
+            .all()
+        
         # Format results
         basic_stats = {}
         missing_values = {
@@ -168,6 +173,30 @@ async def get_analysis(filename: str, db: Session = Depends(get_db)):
                     "indices": anomaly.anomaly_indices
                 }
         
+        # Format visualizations
+        vis_dict = {
+            "histograms": {},
+            "correlation_heatmap": None,
+            "boxplots": {}
+        }
+        
+        for vis in visualizations:
+            if vis.visualization_type == "histogram":
+                vis_dict["histograms"][vis.column] = {
+                    "data": vis.data,
+                    "type": "histogram"
+                }
+            elif vis.visualization_type == "heatmap":
+                vis_dict["correlation_heatmap"] = {
+                    "data": vis.data,
+                    "type": "heatmap"
+                }
+            elif vis.visualization_type == "boxplot":
+                vis_dict["boxplots"][vis.column] = {
+                    "data": vis.data,
+                    "type": "boxplot"
+                }
+        
         return {
             "basic_stats": basic_stats,
             "missing_values": missing_values,
@@ -177,6 +206,7 @@ async def get_analysis(filename: str, db: Session = Depends(get_db)):
                                            reverse=True)
             },
             "anomalies": anomalies_dict,
+            "visualizations": vis_dict,
             "timestamp": file_entry.analysis_completed_at.isoformat(),
             "file_name": file_entry.original_filename,
             "rows": file_entry.row_count,
@@ -193,7 +223,7 @@ async def view_analysis(filename: str, request: Request):
         "analysis.html",
         {
             "request": request,
-            "filename": filename
+            "file_name": filename
         }
     )
 

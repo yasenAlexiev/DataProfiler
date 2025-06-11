@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -24,6 +24,7 @@ class UploadedFile(Base):
     reports = relationship("ReportEntry", back_populates="file", cascade="all, delete-orphan")
     correlations = relationship("CorrelationEntry", back_populates="file", cascade="all, delete-orphan")
     anomalies = relationship("AnomalyEntry", back_populates="file", cascade="all, delete-orphan")
+    visualizations = relationship("VisualizationEntry", back_populates="file", cascade="all, delete-orphan")
 
 class ReportEntry(Base):
     __tablename__ = "file_reports"
@@ -72,3 +73,16 @@ class AnomalyEntry(Base):
     
     # Relationship
     file = relationship("UploadedFile", back_populates="anomalies")
+
+class VisualizationEntry(Base):
+    __tablename__ = "visualizations"
+    
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey('uploaded_files.id', ondelete='CASCADE'))
+    column = Column(String, nullable=True)  # Null for correlation heatmap
+    visualization_type = Column(String, nullable=False)  # histogram, heatmap, boxplot
+    data = Column(JSON, nullable=False)  # Store the visualization data
+    config = Column(JSON, nullable=True)  # Store visualization configuration
+    
+    # Relationship
+    file = relationship("UploadedFile", back_populates="visualizations")

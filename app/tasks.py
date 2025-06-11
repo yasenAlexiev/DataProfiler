@@ -8,7 +8,7 @@ import logging
 from scipy import stats
 from sqlalchemy.orm import Session
 from .database import SessionLocal
-from .models import UploadedFile, ReportEntry, CorrelationEntry, AnomalyEntry
+from .models import UploadedFile, ReportEntry, CorrelationEntry, AnomalyEntry, VisualizationEntry
 from .analysis import analyze_file
 
 # Setup logging
@@ -52,7 +52,8 @@ class DataAnalysisTask:
                     results["basic_stats"],
                     results["missing_values"],
                     results["correlations"],
-                    results["anomalies"]
+                    results["anomalies"],
+                    results["visualizations"]
                 )
                 
                 # Update file status
@@ -66,6 +67,7 @@ class DataAnalysisTask:
                     "missing_values": results["missing_values"],
                     "correlations": results["correlations"],
                     "anomalies": results["anomalies"],
+                    "visualizations": results["visualizations"],
                     "timestamp": datetime.now().isoformat(),
                     "file_name": self.file_path.name,
                     "rows": len(df),
@@ -175,7 +177,8 @@ class DataAnalysisTask:
         basic_stats: Dict[str, Any],
         missing_values: Dict[str, Any],
         correlations: Dict[str, Any],
-        anomalies: Dict[str, Any]
+        anomalies: Dict[str, Any],
+        visualizations: Dict[str, Any]
     ) -> None:
         """Save analysis results to the database"""
         try:
@@ -241,6 +244,42 @@ class DataAnalysisTask:
                         count=anomaly_data["iqr_anomalies"]["count"]
                     )
                     self.db.add(iqr_entry)
+            
+            # Save visualizations
+            if visualizations:
+                # Save histograms
+                if "histograms" in visualizations:
+                    for col, hist_data in visualizations["histograms"].items():
+                        vis_entry = VisualizationEntry(
+                            file_id=file_id,
+                            column=col,
+                            visualization_type="histogram",
+                            data=hist_data["data"],
+                            config={"type": "histogram"}
+                        )
+                        self.db.add(vis_entry)
+                
+                # Save correlation heatmap
+                if "correlation_heatmap" in visualizations and visualizations["correlation_heatmap"]:
+                    vis_entry = VisualizationEntry(
+                        file_id=file_id,
+                        visualization_type="heatmap",
+                        data=visualizations["correlation_heatmap"]["data"],
+                        config={"type": "heatmap"}
+                    )
+                    self.db.add(vis_entry)
+                
+                # Save boxplots
+                if "boxplots" in visualizations:
+                    for col, box_data in visualizations["boxplots"].items():
+                        vis_entry = VisualizationEntry(
+                            file_id=file_id,
+                            column=col,
+                            visualization_type="boxplot",
+                            data=box_data["data"],
+                            config={"type": "boxplot"}
+                        )
+                        self.db.add(vis_entry)
             
             self.db.commit()
             logger.info(f"Analysis results saved to database for file_id {file_id}")

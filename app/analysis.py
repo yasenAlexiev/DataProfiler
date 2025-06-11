@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
 from scipy import stats
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
+import plotly.express as px
+import plotly.graph_objects as go
+import json
 
 class DataAnalyzer:
     def __init__(self, df: pd.DataFrame):
@@ -14,7 +17,7 @@ class DataAnalyzer:
     
     def analyze(self) -> Dict[str, Any]:
         """Perform all analyses and return results as a dictionary"""
-        return {
+        analysis_results = {
             "basic_stats": self.calculate_basic_stats(),
             "missing_values": self.analyze_missing_values(),
             "correlations": self.analyze_correlations(),
@@ -25,6 +28,149 @@ class DataAnalyzer:
                 "dtypes": {col: str(dtype) for col, dtype in self.df.dtypes.items()}
             }
         }
+        
+        # Generate visualizations
+        visualizations = self.generate_visualizations()
+        analysis_results["visualizations"] = visualizations
+        
+        return analysis_results
+
+    def generate_visualizations(self) -> Dict[str, Any]:
+        """Generate various visualizations for the dataset"""
+        visualizations = {
+            "histograms": self._generate_histograms(),
+            "correlation_heatmap": self._generate_correlation_heatmap(),
+            "boxplots": self._generate_boxplots()
+        }
+        return visualizations
+    
+    def _generate_histograms(self) -> Dict[str, Any]:
+        """Generate histograms for numeric columns"""
+        numeric_cols = self.df.select_dtypes(include=[np.number]).columns
+        histograms = {}
+        
+        for col in numeric_cols:
+            # Create histogram using plotly
+            fig = px.histogram(
+                self.df,
+                x=col,
+                nbins=30,
+                title=f"Distribution of {col}",
+                labels={col: col},
+                marginal="box"  # Add a box plot on the margin
+            )
+            
+            # Update layout
+            fig.update_layout(
+                showlegend=False,
+                height=400,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            
+            # Convert to JSON-serializable format
+            histograms[col] = {
+                "data": json.loads(fig.to_json()),
+                "type": "histogram"
+            }
+        
+        return histograms
+    
+    def _generate_correlation_heatmap(self) -> Dict[str, Any]:
+        """Generate correlation heatmap for numeric columns"""
+        numeric_df = self.df.select_dtypes(include=[np.number])
+        if len(numeric_df.columns) < 2:
+            return None
+        
+        corr_matrix = numeric_df.corr()
+        
+        # Create heatmap using plotly
+        fig = go.Figure(data=go.Heatmap(
+            z=corr_matrix.values,
+            x=corr_matrix.columns,
+            y=corr_matrix.columns,
+            colorscale='RdBu',
+            zmin=-1,
+            zmax=1,
+            colorbar=dict(
+                title='Correlation',
+                titleside='right',
+                titlefont=dict(size=14)
+            ),
+            text=[[f'{val:.2f}' for val in row] for row in corr_matrix.values],
+            texttemplate='%{text}',
+            textfont={"size": 10},
+            hoverongaps=False,
+            hoverinfo='text'
+        ))
+        
+        # Update layout for better readability
+        fig.update_layout(
+            title={
+                'text': "Correlation Heatmap",
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': dict(size=20)
+            },
+            height=600,
+            width=800,
+            margin=dict(l=20, r=20, t=60, b=20),
+            xaxis=dict(
+                tickangle=45,
+                tickfont=dict(size=10),
+                tickmode='array',
+                ticktext=corr_matrix.columns,
+                tickvals=corr_matrix.columns
+            ),
+            yaxis=dict(
+                tickfont=dict(size=10),
+                tickmode='array',
+                ticktext=corr_matrix.columns,
+                tickvals=corr_matrix.columns
+            )
+        )
+        
+        # Ensure the figure is properly serialized
+        return {
+            "data": json.loads(fig.to_json()),
+            "type": "heatmap",
+            "layout": {
+                "height": 600,
+                "width": "100%",
+                "autosize": True,
+                "margin": {"l": 20, "r": 20, "t": 60, "b": 20}
+            }
+        }
+    
+    def _generate_boxplots(self) -> Dict[str, Any]:
+        """Generate boxplots for numeric columns"""
+        numeric_cols = self.df.select_dtypes(include=[np.number]).columns
+        boxplots = {}
+        
+        for col in numeric_cols:
+            # Create boxplot using plotly
+            fig = px.box(
+                self.df,
+                y=col,
+                title=f"Boxplot of {col}",
+                points="outliers"  # Show outliers as points
+            )
+            
+            # Update layout
+            fig.update_layout(
+                showlegend=False,
+                height=400,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            
+            # Convert to JSON-serializable format
+            boxplots[col] = {
+                "data": json.loads(fig.to_json()),
+                "type": "boxplot"
+            }
+        
+        return boxplots
     
     def calculate_basic_stats(self) -> Dict[str, Any]:
         """Calculate basic statistics for numeric columns"""
