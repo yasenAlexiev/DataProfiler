@@ -233,26 +233,33 @@ class DataAnalyzer:
         anomalies = {}
         
         for col in numeric_cols:
+            # Get non-null values for the column
+            col_data = self.df[col].dropna()
+            
             # Z-score method
-            z_scores = np.abs(stats.zscore(self.df[col].dropna()))
+            z_scores = np.abs(stats.zscore(col_data))
             z_score_threshold = 3
-            z_score_anomalies = self.df[z_scores > z_score_threshold].index.tolist()
+            # Get indices of anomalies relative to the non-null data
+            z_score_anomaly_indices = col_data.index[z_scores > z_score_threshold].tolist()
             
             # IQR method
-            Q1 = self.df[col].quantile(0.25)
-            Q3 = self.df[col].quantile(0.75)
+            Q1 = col_data.quantile(0.25)
+            Q3 = col_data.quantile(0.75)
             IQR = Q3 - Q1
-            iqr_anomalies = self.df[(self.df[col] < (Q1 - 1.5 * IQR)) | 
-                                  (self.df[col] > (Q3 + 1.5 * IQR))].index.tolist()
+            # Get indices of anomalies relative to the non-null data
+            iqr_anomaly_indices = col_data.index[
+                (col_data < (Q1 - 1.5 * IQR)) | 
+                (col_data > (Q3 + 1.5 * IQR))
+            ].tolist()
             
             anomalies[col] = {
                 "z_score_anomalies": {
-                    "count": len(z_score_anomalies),
-                    "indices": z_score_anomalies[:100]  # Limit to first 100 for JSON serialization
+                    "count": len(z_score_anomaly_indices),
+                    "indices": z_score_anomaly_indices[:100]  # Limit to first 100 for JSON serialization
                 },
                 "iqr_anomalies": {
-                    "count": len(iqr_anomalies),
-                    "indices": iqr_anomalies[:100]  # Limit to first 100 for JSON serialization
+                    "count": len(iqr_anomaly_indices),
+                    "indices": iqr_anomaly_indices[:100]  # Limit to first 100 for JSON serialization
                 }
             }
         
