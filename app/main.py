@@ -3,7 +3,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
-import pandas as pd
 import os
 from pathlib import Path
 from .tasks import analyze_file_background
@@ -23,6 +22,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
+    """Serve the main upload page"""
     return templates.TemplateResponse(
         "index.html",
         {"request": request}
@@ -35,6 +35,7 @@ async def upload_file(
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
+    """Handle file upload and start analysis"""
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")
     
@@ -76,7 +77,7 @@ async def upload_file(
 
 @app.get("/analysis/{filename}")
 async def get_analysis(filename: str, db: Session = Depends(get_db)):
-    """Endpoint to get analysis results for a specific file"""
+    """Get analysis results for a specific file from the database"""
     try:
         # Find the most recent file entry for this filename
         file_entry = db.query(UploadedFile)\
@@ -187,7 +188,7 @@ async def get_analysis(filename: str, db: Session = Depends(get_db)):
 
 @app.get("/view/{filename}")
 async def view_analysis(filename: str, request: Request):
-    """Endpoint to view analysis results in a dedicated page"""
+    """Serve the analysis results page"""
     return templates.TemplateResponse(
         "analysis.html",
         {

@@ -9,6 +9,7 @@ from scipy import stats
 from sqlalchemy.orm import Session
 from .database import SessionLocal
 from .models import UploadedFile, ReportEntry, CorrelationEntry, AnomalyEntry
+from .analysis import analyze_file
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -23,43 +24,35 @@ class DataAnalysisTask:
         self.db.close()
         
     def analyze(self) -> Dict[str, Any]:
-        """Main analysis function that orchestrates all analysis tasks"""
+        """Main analysis function that orchestrates the analysis and database operations"""
         try:
-            # Read the CSV file
-            df = pd.read_csv(self.file_path)
-            
-            # Basic validation
-            if df.empty:
-                raise ValueError("File is empty")
-            
             # Create file entry in database
             file_entry = UploadedFile(
                 filename=str(self.file_path),
                 original_filename=self.file_path.name,
                 status="processing",
-                file_size=self.file_path.stat().st_size,
-                row_count=len(df),
-                column_count=len(df.columns)
+                file_size=self.file_path.stat().st_size
             )
             self.db.add(file_entry)
             self.db.commit()
             self.db.refresh(file_entry)
             
             try:
-                # Perform all analyses
-                basic_stats = self._calculate_basic_stats(df)
-                missing_values = self._analyze_missing_values(df)
-                correlations = self._analyze_correlations(df)
-                anomalies = self._detect_anomalies(df)
+                # Perform analysis using the analysis module
+                df, results = analyze_file(str(self.file_path))
+                
+                # Update file entry with row and column counts
+                file_entry.row_count = len(df)
+                file_entry.column_count = len(df.columns)
                 
                 # Save results to database
                 self._save_results_to_db(
                     file_entry.id,
                     df,
-                    basic_stats,
-                    missing_values,
-                    correlations,
-                    anomalies
+                    results["basic_stats"],
+                    results["missing_values"],
+                    results["correlations"],
+                    results["anomalies"]
                 )
                 
                 # Update file status
@@ -69,10 +62,10 @@ class DataAnalysisTask:
                 
                 # Return results for immediate display
                 return {
-                    "basic_stats": basic_stats,
-                    "missing_values": missing_values,
-                    "correlations": correlations,
-                    "anomalies": anomalies,
+                    "basic_stats": results["basic_stats"],
+                    "missing_values": results["missing_values"],
+                    "correlations": results["correlations"],
+                    "anomalies": results["anomalies"],
                     "timestamp": datetime.now().isoformat(),
                     "file_name": self.file_path.name,
                     "rows": len(df),
