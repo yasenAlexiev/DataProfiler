@@ -7,18 +7,53 @@ import os
 from pathlib import Path
 from .tasks import analyze_file_background
 from sqlalchemy.orm import Session
-from .database import get_db
+from .database import get_db, engine, Base
 from .models import UploadedFile, ReportEntry, CorrelationEntry, AnomalyEntry, VisualizationEntry
 from sqlalchemy import desc
+import shutil
+from datetime import datetime
+from .scheduler import setup_scheduler, shutdown_scheduler
+import logging
+from .tasks import DataAnalysisTask
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="CSV Uploader")
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    # Startup
+    try:
+        setup_scheduler()
+        logger.info("Application startup completed successfully")
+    except Exception as e:
+        logger.error(f"Error during application startup: {str(e)}")
+        raise
+    
+    yield
+    
+    # Shutdown
+    try:
+        shutdown_scheduler()
+        logger.info("Application shutdown completed successfully")
+    except Exception as e:
+        logger.error(f"Error during application shutdown: {str(e)}")
+        raise
+
+app = FastAPI(title="Data Profiler", lifespan=lifespan)
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Templates setup
+# Mount static files and templates
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
