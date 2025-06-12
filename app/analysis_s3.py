@@ -148,13 +148,14 @@ def upload_old_analyses(hours_threshold: int = 3):
     """Upload analysis results older than the specified hours to S3 and delete from database"""
     db = SessionLocal()
     try:
-        # Calculate the cutoff time
+        # Calculate the cutoff time in UTC
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_threshold)
         
         # Get all completed analyses older than the cutoff time
+        # Convert database timestamps to UTC for comparison
         old_files = db.query(UploadedFile)\
             .filter(UploadedFile.status == "completed")\
-            .filter(UploadedFile.analysis_completed_at < cutoff_time)\
+            .filter(UploadedFile.analysis_completed_at.astimezone(timezone.utc) < cutoff_time)\
             .all()
         
         bucket = os.getenv("S3_BUCKET")
@@ -166,8 +167,8 @@ def upload_old_analyses(hours_threshold: int = 3):
                 # Format the analysis data
                 analysis_data = format_analysis_data(file_entry, db)
                 
-                # Create S3 key with timestamp and filename
-                timestamp = file_entry.analysis_completed_at.strftime("%Y%m%d_%H%M%S")
+                # Create S3 key with UTC timestamp
+                timestamp = file_entry.analysis_completed_at.astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 s3_key = f"analysis_results/{timestamp}_{file_entry.original_filename}.json"
                 
                 # Convert to JSON and upload to S3
@@ -200,6 +201,43 @@ def upload_old_analyses(hours_threshold: int = 3):
         
     finally:
         db.close()
+
+def get_analysis_from_s3(filename: str) -> dict:
+    """Fetch analysis results for a specific file from S3"""
+    bucket = os.getenv("S3_BUCKET")
+    try:
+        # List objects in the bucket with the filename
+        response = s3.list_objects_v2(
+            Bucket=bucket,
+            Prefix=f"analysis_results/",
+            MaxKeys=1000
+        )
+        
+        # Find the most recent analysis for this filename
+        matching_files = []
+        for obj in response.get('Contents', []):
+            if filename in obj['Key']:
+                matching_files.append(obj)
+        
+        if not matching_files:
+            return None
+            
+        # Sort by last modified time and get the most recent
+        latest_file = max(matching_files, key=lambda x: x['LastModified'])
+        
+        # Get the file content
+        response = s3.get_object(
+            Bucket=bucket,
+            Key=latest_file['Key']
+        )
+        
+        # Parse and return the JSON data
+        analysis_data = json.loads(response['Body'].read().decode('utf-8'))
+        return analysis_data
+        
+    except Exception as e:
+        print(f"❌ Error fetching analysis from S3: {str(e)}")
+        return None
 
 if __name__ == "__main__":
     # Run the upload for analyses older than 3 hours

@@ -16,6 +16,7 @@ from .scheduler import setup_scheduler, shutdown_scheduler
 import logging
 from .tasks import DataAnalysisTask
 from contextlib import asynccontextmanager
+from .analysis_s3 import get_analysis_from_s3
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -112,144 +113,159 @@ async def upload_file(
 
 @app.get("/analysis/{filename}")
 async def get_analysis(filename: str, db: Session = Depends(get_db)):
-    """Get analysis results for a specific file from the database"""
+    """Get analysis results for a specific file from the database or S3"""
     try:
-        # Find the most recent file entry for this filename
+        # First try to get from database
         file_entry = db.query(UploadedFile)\
             .filter(UploadedFile.original_filename == filename)\
             .order_by(desc(UploadedFile.upload_time))\
             .first()
         
-        if not file_entry:
-            raise HTTPException(status_code=404, detail="File not found")
+        if file_entry:
+            if file_entry.status == "failed":
+                raise HTTPException(status_code=500, detail=f"Analysis failed: {file_entry.error_message}")
+            
+            if file_entry.status == "processing":
+                return {
+                    "status": "processing",
+                    "message": "Analysis in progress"
+                }
+            
+            # Get all analysis results from database
+            reports = db.query(ReportEntry)\
+                .filter(ReportEntry.file_id == file_entry.id)\
+                .all()
+            
+            correlations = db.query(CorrelationEntry)\
+                .filter(CorrelationEntry.file_id == file_entry.id)\
+                .all()
+            
+            anomalies = db.query(AnomalyEntry)\
+                .filter(AnomalyEntry.file_id == file_entry.id)\
+                .all()
+            
+            visualizations = db.query(VisualizationEntry)\
+                .filter(VisualizationEntry.file_id == file_entry.id)\
+                .all()
+            
+            # Format results from database
+            return format_analysis_results(file_entry, reports, correlations, anomalies, visualizations)
         
-        if file_entry.status == "failed":
-            raise HTTPException(status_code=500, detail=f"Analysis failed: {file_entry.error_message}")
-        
-        if file_entry.status == "processing":
+        # If not in database, try to get from S3
+        s3_data = get_analysis_from_s3(filename)
+        if s3_data:
             return {
-                "status": "processing",
-                "message": "Analysis in progress"
+                **s3_data,
+                "source": "s3",
+                "status": "completed"
             }
         
-        # Get all analysis results from database
-        reports = db.query(ReportEntry)\
-            .filter(ReportEntry.file_id == file_entry.id)\
-            .all()
-        
-        correlations = db.query(CorrelationEntry)\
-            .filter(CorrelationEntry.file_id == file_entry.id)\
-            .all()
-        
-        anomalies = db.query(AnomalyEntry)\
-            .filter(AnomalyEntry.file_id == file_entry.id)\
-            .all()
-        
-        # Get visualizations
-        visualizations = db.query(VisualizationEntry)\
-            .filter(VisualizationEntry.file_id == file_entry.id)\
-            .all()
-        
-        # Format results
-        basic_stats = {}
-        missing_values = {
-            "total_missing": 0,
-            "missing_per_column": {},
-            "missing_percentage": {}
-        }
-        
-        for report in reports:
-            # Basic stats
-            if report.mean is not None:  # Only numeric columns have these stats
-                basic_stats[report.column] = {
-                    "mean": report.mean,
-                    "std": report.stddev,
-                    "min": report.min_value,
-                    "max": report.max_value,
-                    "median": report.median,
-                    "q1": report.q1,
-                    "q3": report.q3,
-                    "skew": report.skew,
-                    "kurtosis": report.kurtosis
-                }
-            
-            # Missing values
-            missing_values["missing_per_column"][report.column] = report.missing_count
-            missing_values["missing_percentage"][report.column] = report.missing_percentage
-            missing_values["total_missing"] += report.missing_count
-        
-        # Format correlations
-        strong_correlations = [
-            {
-                "column1": corr.column1,
-                "column2": corr.column2,
-                "correlation": corr.correlation
-            }
-            for corr in correlations
-        ]
-        
-        # Format anomalies
-        anomalies_dict = {}
-        for anomaly in anomalies:
-            if anomaly.column not in anomalies_dict:
-                anomalies_dict[anomaly.column] = {
-                    "z_score_anomalies": {"count": 0, "indices": []},
-                    "iqr_anomalies": {"count": 0, "indices": []}
-                }
-            
-            if anomaly.method == "z_score":
-                anomalies_dict[anomaly.column]["z_score_anomalies"] = {
-                    "count": anomaly.count,
-                    "indices": anomaly.anomaly_indices
-                }
-            else:  # iqr
-                anomalies_dict[anomaly.column]["iqr_anomalies"] = {
-                    "count": anomaly.count,
-                    "indices": anomaly.anomaly_indices
-                }
-        
-        # Format visualizations
-        vis_dict = {
-            "histograms": {},
-            "correlation_heatmap": None,
-            "boxplots": {}
-        }
-        
-        for vis in visualizations:
-            if vis.visualization_type == "histogram":
-                vis_dict["histograms"][vis.column] = {
-                    "data": vis.data,
-                    "type": "histogram"
-                }
-            elif vis.visualization_type == "heatmap":
-                vis_dict["correlation_heatmap"] = {
-                    "data": vis.data,
-                    "type": "heatmap"
-                }
-            elif vis.visualization_type == "boxplot":
-                vis_dict["boxplots"][vis.column] = {
-                    "data": vis.data,
-                    "type": "boxplot"
-                }
-        
-        return {
-            "basic_stats": basic_stats,
-            "missing_values": missing_values,
-            "correlations": {
-                "strong_correlations": sorted(strong_correlations, 
-                                           key=lambda x: abs(x["correlation"]), 
-                                           reverse=True)
-            },
-            "anomalies": anomalies_dict,
-            "visualizations": vis_dict,
-            "timestamp": file_entry.analysis_completed_at.isoformat(),
-            "file_name": file_entry.original_filename,
-            "rows": file_entry.row_count,
-            "columns": [report.column for report in reports]
-        }
+        raise HTTPException(status_code=404, detail="Analysis not found in database or S3")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def format_analysis_results(file_entry, reports, correlations, anomalies, visualizations):
+    """Format analysis results from database entries"""
+    # Format basic stats and missing values
+    basic_stats = {}
+    missing_values = {
+        "total_missing": 0,
+        "missing_per_column": {},
+        "missing_percentage": {}
+    }
+    
+    for report in reports:
+        # Basic stats
+        if report.mean is not None:  # Only numeric columns have these stats
+            basic_stats[report.column] = {
+                "mean": report.mean,
+                "std": report.stddev,
+                "min": report.min_value,
+                "max": report.max_value,
+                "median": report.median,
+                "q1": report.q1,
+                "q3": report.q3,
+                "skew": report.skew,
+                "kurtosis": report.kurtosis
+            }
+        
+        # Missing values
+        missing_values["missing_per_column"][report.column] = report.missing_count
+        missing_values["missing_percentage"][report.column] = report.missing_percentage
+        missing_values["total_missing"] += report.missing_count
+    
+    # Format correlations
+    strong_correlations = [
+        {
+            "column1": corr.column1,
+            "column2": corr.column2,
+            "correlation": corr.correlation
+        }
+        for corr in correlations
+    ]
+    
+    # Format anomalies
+    anomalies_dict = {}
+    for anomaly in anomalies:
+        if anomaly.column not in anomalies_dict:
+            anomalies_dict[anomaly.column] = {
+                "z_score_anomalies": {"count": 0, "indices": []},
+                "iqr_anomalies": {"count": 0, "indices": []}
+            }
+        
+        if anomaly.method == "z_score":
+            anomalies_dict[anomaly.column]["z_score_anomalies"] = {
+                "count": anomaly.count,
+                "indices": anomaly.anomaly_indices
+            }
+        else:  # iqr
+            anomalies_dict[anomaly.column]["iqr_anomalies"] = {
+                "count": anomaly.count,
+                "indices": anomaly.anomaly_indices
+            }
+    
+    # Format visualizations
+    vis_dict = {
+        "histograms": {},
+        "correlation_heatmap": None,
+        "boxplots": {}
+    }
+    
+    for vis in visualizations:
+        if vis.visualization_type == "histogram":
+            vis_dict["histograms"][vis.column] = {
+                "data": vis.data,
+                "type": "histogram"
+            }
+        elif vis.visualization_type == "heatmap":
+            vis_dict["correlation_heatmap"] = {
+                "data": vis.data,
+                "type": "heatmap"
+            }
+        elif vis.visualization_type == "boxplot":
+            vis_dict["boxplots"][vis.column] = {
+                "data": vis.data,
+                "type": "boxplot"
+            }
+    
+    return {
+        "basic_stats": basic_stats,
+        "missing_values": missing_values,
+        "correlations": {
+            "strong_correlations": sorted(strong_correlations, 
+                                       key=lambda x: abs(x["correlation"]), 
+                                       reverse=True)
+        },
+        "anomalies": anomalies_dict,
+        "visualizations": vis_dict,
+        "timestamp": file_entry.analysis_completed_at.isoformat(),
+        "file_name": file_entry.original_filename,
+        "rows": file_entry.row_count,
+        "columns": [report.column for report in reports],
+        "source": "database",
+        "status": "completed"
+    }
 
 @app.get("/view/{filename}")
 async def view_analysis(filename: str, request: Request):

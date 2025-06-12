@@ -174,8 +174,8 @@
 
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <script>
-let pollInterval;
 const filename = "{{ file_name }}";
+let pollInterval;
 let currentStep = 0;
 const totalSteps = 5;
 
@@ -387,37 +387,27 @@ function showLoading() {
     document.getElementById('loading-state').classList.remove('hidden');
 }
 
-async function checkAnalysis() {
+async function fetchAnalysis() {
     try {
-        const response = await fetch(`/analysis/${encodeURIComponent(filename)}`);
+        const response = await fetch(`/analysis/${filename}`);
         const data = await response.json();
         
-        if (response.ok) {
-            if (data.status === "processing") {
-                showLoading();
-                // Update progress based on available data
-                if (data.basic_stats) currentStep = 1;
-                if (data.missing_values) currentStep = 2;
-                if (data.correlations) currentStep = 3;
-                if (data.anomalies) currentStep = 4;
-                if (data.visualizations) currentStep = 5;
-                
-                updateProgress(currentStep);
-                updateLoadingStatus(getLoadingMessage(currentStep));
-                return;
+        if (data.status === "processing") {
+            showLoading();
+            // Start polling only if the analysis is still processing
+            if (!pollInterval) {
+                pollInterval = setInterval(fetchAnalysis, 2000);
             }
-            
-            // Analysis is complete, show results
-            clearInterval(pollInterval);
-            showResults(data);
+        } else if (data.error) {
+            showError(data.error);
+            if (pollInterval) clearInterval(pollInterval);
         } else {
-            clearInterval(pollInterval);
-            showError(data.detail || "Analysis failed");
+            showResults(data);
+            if (pollInterval) clearInterval(pollInterval);
         }
     } catch (error) {
-        console.error("Error fetching analysis:", error);
-        clearInterval(pollInterval);
-        showError("Failed to fetch analysis results");
+        showError('Error fetching analysis results: ' + error.message);
+        if (pollInterval) clearInterval(pollInterval);
     }
 }
 
@@ -433,11 +423,7 @@ function getLoadingMessage(step) {
     return messages[step] || "Analyzing your data...";
 }
 
-// Start polling for results
-showLoading();
-updateProgress(0);
-updateLoadingStatus(getLoadingMessage(0));
-pollInterval = setInterval(checkAnalysis, 2000);
-checkAnalysis(); // Initial check
+// Start fetching immediately when page loads
+document.addEventListener('DOMContentLoaded', fetchAnalysis);
 </script>
 {% endblock %} 
